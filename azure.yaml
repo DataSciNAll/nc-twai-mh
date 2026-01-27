@@ -1,0 +1,6 @@
+name: ai-foundry
+metadata:
+  template: ai-foundry@0.0.1
+infra:
+  provider: bicep
+  path: infra
