@@ -31,6 +31,7 @@ var tags = {
 }
 
 module foundry './modules/foundry.bicep' = {
+  name: 'foundry'
   params: {
     location: location
     tags: tags
@@ -46,6 +47,22 @@ module foundry './modules/foundry.bicep' = {
     embeddingModel: embeddingModel
     embeddingModelCapacity: embeddingModelCapacity
     deployingUserPrincipalId: az.deployer().objectId
+  }
+}
+
+// Web App for Streamlit Chat UI
+module webapp './modules/webapp.bicep' = {
+  name: 'webapp'
+  params: {
+    location: location
+    tags: tags
+    webAppName: '${abbrs.compute.webApp}${resourceToken}'
+    appServicePlanName: '${abbrs.compute.appServicePlan}${resourceToken}'
+    azureOpenAIEndpoint: foundry.outputs.openAIEndpoint
+    aiServicesName: foundry.outputs.accountName
+    chatModel: chatModel
+    appInsightsConnectionString: foundry.outputs.appInsightsConnectionString
+    logAnalyticsWorkspaceId: foundry.outputs.logAnalyticsWorkspaceId
   }
 }
 
@@ -67,3 +84,5 @@ output AZURE_APPINSIGHTS_NAME string = foundry.outputs.appInsightsName
 output AZURE_APPINSIGHTS_CONNECTION_STRING string = foundry.outputs.appInsightsConnectionString
 output AZURE_CHAT_MODEL string = chatModel
 output AZURE_EMBEDDING_MODEL string = embeddingModel
+output AZURE_WEB_APP_NAME string = webapp.outputs.webAppName
+output AZURE_WEB_APP_URL string = webapp.outputs.webAppUrl

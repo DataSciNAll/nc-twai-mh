@@ -411,3 +411,4 @@ output storageName string = storageAccount.name
 output storageBlobEndpoint string = storageAccount.properties.primaryEndpoints.blob
 output appInsightsName string = appInsights.name
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output logAnalyticsWorkspaceId string = logAnalytics.id
