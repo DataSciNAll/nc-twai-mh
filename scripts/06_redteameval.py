@@ -111,7 +111,7 @@ async def run_red_team_scan(azure_ai_project: str, credential, backend_url: str)
     print("🎯 Starting Red Team Evaluation of Target Application")
     print("="*70)
     
-    # Create output directory and change to it (SDK creates scan folder in cwd)
+    # Create output directory
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     original_cwd = os.getcwd()
     os.chdir(OUTPUT_DIR)
@@ -235,6 +235,7 @@ async def run_red_team_scan(azure_ai_project: str, credential, backend_url: str)
     print()
     print("💡 Tip: View results in Microsoft Foundry portal for interactive analysis")
     print("="*70)
+    os.chdir(original_cwd)
 
 
 # ----------------------------------------------
