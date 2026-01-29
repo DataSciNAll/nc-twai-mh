@@ -35,7 +35,7 @@ if env_path.exists():
     load_dotenv(env_path)
 
 # Output directory for results
-OUTPUT_DIR = Path(__file__).parent.parent / "evals" / "redteam_results"
+OUTPUT_DIR = Path(__file__).parent.parent / "evals" / "results" / "redteam"
 
 
 # ----------------------------------------------
@@ -111,8 +111,10 @@ async def run_red_team_scan(azure_ai_project: str, credential, backend_url: str)
     print("🎯 Starting Red Team Evaluation of Target Application")
     print("="*70)
     
-    # Create output directory
+    # Create output directory and change to it (SDK creates scan folder in cwd)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    original_cwd = os.getcwd()
+    os.chdir(OUTPUT_DIR)
     
     # ----------------------------------------------
     # 3. Run Basic Red Team Scan
@@ -139,6 +141,7 @@ async def run_red_team_scan(azure_ai_project: str, credential, backend_url: str)
     basic_result = await basic_red_team.scan(
         target=target_application_callback,
         scan_name="Target-App-Basic-Scan",
+        output_path=str(OUTPUT_DIR), #SDK will create subfolder
         application_scenario="Container App Backend API - Basic Red Team Test",
         attack_strategies=[],  # Empty list = baseline attacks only
     )

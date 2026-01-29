@@ -15,7 +15,7 @@
       "value": "${AZURE_CHAT_MODEL_VERSION=2024-07-18}"
     },
     "embeddingModel": {
-      "value": "${AZURE_EMBEDDING_MODEL=text-embedding-3-small}"
+      "value": "${AZURE_EMBEDDING_MODEL=text-embedding-3-large}"
     }
   }
 }

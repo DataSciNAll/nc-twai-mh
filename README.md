@@ -34,6 +34,7 @@ This deploys:
 - Azure AI Search
 - Azure Storage Account
 - Application Insights
+- Container App & Repo with empty image
 
 ### 3. Set Up Python Environment
 
@@ -54,22 +55,34 @@ uv pip install -r requirements.txt
 python 01_upload_data_to_search.py
 ```
 
-### 5. Create the Agent
+### 5. Deploy Container App
 
 ```bash
-python 02_create_agent.py
+./02_deploy_container_apps.sh
 ```
 
-### 6. Run Evaluations
+### 6. Create the Agent
 
 ```bash
-python 03_run_evals.py
+python 03_create_agent.py
 ```
 
-### 7. Run Safety Evaluations
+### 7. Run Evaluations
 
 ```bash
-python 04_safety_evals.py
+python 04_run_evaltarget.py
+```
+
+### 8. Run Safety Evaluations
+
+```bash
+python 05_safety_evals.py
+```
+
+### 9. Run Red Team Evaluation
+
+```bash
+python 06_redteameval.py
 ```
 
 ## Cleanup

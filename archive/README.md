@@ -1,37 +1,32 @@
 # Streamlit Chat Application
 
-A simple chat interface that uses Azure OpenAI with managed identity authentication, designed to run on Azure Container Apps.
+A simple chat interface that uses Azure OpenAI with managed identity authentication, designed to run on Azure App Service.
 
 ## Features
 
 - 💬 **Streaming Chat Responses**: Real-time streaming of AI responses
 - 🔐 **Managed Identity Authentication**: Secure keyless authentication using Azure AD
 - 📝 **Conversation History**: Maintains chat context within the session
-- 🐳 **Azure Container Apps Ready**: Containerized deployment with nginx reverse proxy
+- ☁️ **Azure App Service Ready**: Configured for Linux App Service deployment
 - 🔌 **REST API**: FastAPI backend for programmatic access
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                  Azure Container Apps                        │
+│                    Azure App Service                         │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │                   nginx (port 8080)                  │    │
-│  │         ┌──────────────┬──────────────┐             │    │
-│  │         │   /          │   /api/*     │             │    │
-│  │         │   /chat      │   /chat      │             │    │
-│  │         ▼              ▼              │             │    │
-│  │  ┌──────────┐    ┌──────────┐        │             │    │
-│  │  │Streamlit │    │ FastAPI  │        │             │    │
-│  │  │ (8501)   │    │ (8000)   │        │             │    │
-│  │  └────┬─────┘    └────┬─────┘        │             │    │
-│  │       └───────┬───────┘              │             │    │
-│  │               ▼                      │             │    │
-│  │       Azure OpenAI Client            │             │    │
-│  │                                      │             │    │
-│  │       User Assigned Managed Identity │             │    │
-│  └──────────────────────────────────────┘             │    │
-└─────────────────────────────────────────────────────────────┘
+│  │         Streamlit UI  |  FastAPI REST API           │    │
+│  │         (port 8501)   |  (port 8000)                │    │
+│  │                                                      │    │
+│  │  ┌──────────┐    ┌─────────────────┐               │    │
+│  │  │ Chat UI  │───▶│ Azure OpenAI    │               │    │
+│  │  │ REST API │    │ Client          │               │    │
+│  │  └──────────┘    └────────┬────────┘               │    │
+│  │                           │                         │    │
+│  │  System Assigned Managed Identity                   │    │
+│  └───────────────────────────┼─────────────────────────┘    │
+└──────────────────────────────┼──────────────────────────────┘
                                │
                                ▼
                 ┌──────────────────────────┐
@@ -48,7 +43,6 @@ A simple chat interface that uses Azure OpenAI with managed identity authenticat
 - Azure subscription
 - Azure CLI installed
 - azd CLI installed
-- Docker (for local container testing)
 - Python 3.11+
 
 ## Local Development
@@ -77,15 +71,6 @@ A simple chat interface that uses Azure OpenAI with managed identity authenticat
    - FastAPI: `http://localhost:8000`
    - API Docs: `http://localhost:8000/docs`
 
-4. **Run with Docker:**
-   ```bash
-   docker build -t chat-app .
-   docker run -p 8080:8080 \
-     -e AZURE_OPENAI_ENDPOINT="https://your-openai-service.openai.azure.com/" \
-     -e AZURE_OPENAI_CHAT_DEPLOYMENT="gpt-4o-mini" \
-     chat-app
-   ```
-
 ## REST API Usage
 
 ### Endpoints
@@ -93,14 +78,14 @@ A simple chat interface that uses Azure OpenAI with managed identity authenticat
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | API information |
-| GET | `/api/health` | Health check |
+| GET | `/health` | Health check |
 | POST | `/chat` | Send message, get complete response |
 | POST | `/chat/stream` | Send message, get streaming response |
 
 ### Example: Send a chat message
 
 ```bash
-curl -X POST "http://localhost:8080/chat" \
+curl -X POST "http://localhost:8000/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "What is Azure OpenAI?",
@@ -112,7 +97,7 @@ curl -X POST "http://localhost:8080/chat" \
 ### Example: Chat with conversation history
 
 ```bash
-curl -X POST "http://localhost:8080/chat" \
+curl -X POST "http://localhost:8000/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Can you explain more?",
@@ -126,24 +111,42 @@ curl -X POST "http://localhost:8080/chat" \
 ### Example: Streaming response
 
 ```bash
-curl -X POST "http://localhost:8080/chat/stream" \
+curl -X POST "http://localhost:8000/chat/stream" \
   -H "Content-Type: application/json" \
   -d '{"message": "Tell me a short story"}'
 ```
 
 ## Deployment to Azure
 
-### Using the deployment script
+### Option 1: Using the deployment script
 
 1. **Provision infrastructure (if not already done):**
    ```bash
    azd up
    ```
 
-2. **Deploy the Container App:**
+2. **Deploy the web app:**
    ```bash
    cd scripts
-   ./06_deploy_container_apps.sh
+   ./05_deploy_webapp.sh
+   ```
+
+### Option 2: Manual deployment
+
+1. **Provision infrastructure:**
+   ```bash
+   azd up
+   ```
+
+2. **Deploy using Azure CLI:**
+   ```bash
+   cd webapp
+   zip -r ../webapp.zip .
+   az webapp deploy \
+       --resource-group <your-rg> \
+       --name <your-webapp-name> \
+       --src-path ../webapp.zip \
+       --type zip
    ```
 
 ## Configuration
@@ -154,13 +157,12 @@ The app uses the following environment variables (set automatically by Bicep):
 |----------|-------------|
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI service endpoint URL |
 | `AZURE_OPENAI_CHAT_DEPLOYMENT` | Model deployment name (default: gpt-4o-mini) |
-| `AZURE_CLIENT_ID` | User-assigned managed identity client ID |
 
 ## Authentication
 
 The application uses **Azure Managed Identity** for authentication:
 
-- **In Azure Container Apps**: User-assigned managed identity is configured for the container
+- **In Azure App Service**: System-assigned managed identity is automatically used
 - **Locally**: Azure CLI credentials are used via `DefaultAzureCredential`
 
 The managed identity is granted the `Cognitive Services OpenAI User` role on the Azure OpenAI resource during infrastructure provisioning.
@@ -170,21 +172,16 @@ The managed identity is granted the `Cognitive Services OpenAI User` role on the
 ### View application logs
 
 ```bash
-az containerapp logs show \
-  --name <container-app-name> \
-  --resource-group <rg-name> \
-  --follow
+az webapp log tail --resource-group <rg-name> --name <webapp-name>
 ```
 
 ### Common issues
 
 1. **401 Unauthorized**: The managed identity may not have proper permissions. Verify the role assignment in Azure portal.
 
-2. **Container not starting**: Check the container logs. Ensure the Docker image builds correctly and all environment variables are set.
+2. **App not starting**: Check the startup logs. Ensure Python 3.11 is configured and all dependencies install correctly.
 
 3. **Timeout errors**: Azure OpenAI may be throttled. Check your TPM (tokens per minute) quota.
-
-4. **502 Bad Gateway**: The application inside the container may not be ready. Check nginx and application startup logs.
 
 ## File Structure
 
@@ -192,11 +189,8 @@ az containerapp logs show \
 webapp/
 ├── app.py              # Streamlit web UI application
 ├── api.py              # FastAPI REST API
-├── Dockerfile          # Container image definition
-├── nginx.conf          # nginx reverse proxy configuration
-├── supervisord.conf    # Process manager for running multiple services
 ├── requirements.txt    # Python dependencies
-├── startup.sh          # Container startup script (Streamlit)
-├── startup_api.sh      # Container startup script (FastAPI)
-└── README.md           # This file
+├── startup.sh          # Azure App Service startup (Streamlit)
+├── startup_api.sh      # Azure App Service startup (FastAPI)
+└── README.md          # This file
 ```

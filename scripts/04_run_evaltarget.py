@@ -147,8 +147,10 @@ if __name__ == "__main__":
     
     # Path to evaluation data
     #data_path = Path(__file__).parent.parent / "evals" / "ground_truth_small.jsonl"
-    data_path = Path(__file__).parent.parent / "evals" / "ground_truth.jsonl"
-    output_path = Path(__file__).parent.parent / "evals" / "results_target.jsonl"
+    data_path = Path(__file__).parent.parent / "evals" / "ground_truth_small.jsonl"
+    output_dir = Path(__file__).parent.parent / "evals" / "results" / "quality"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "results_target.jsonl"
     
     if not data_path.exists():
         # Try the full ground truth file
