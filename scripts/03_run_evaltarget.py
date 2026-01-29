@@ -146,7 +146,8 @@ if __name__ == "__main__":
     groundedness_eval = GroundednessEvaluator(model_config)
     
     # Path to evaluation data
-    data_path = Path(__file__).parent.parent / "evals" / "ground_truth_small.jsonl"
+    #data_path = Path(__file__).parent.parent / "evals" / "ground_truth_small.jsonl"
+    data_path = Path(__file__).parent.parent / "evals" / "ground_truth.jsonl"
     output_path = Path(__file__).parent.parent / "evals" / "results_target.jsonl"
     
     if not data_path.exists():
