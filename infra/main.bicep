@@ -50,19 +50,21 @@ module foundry './modules/foundry.bicep' = {
   }
 }
 
-// Web App for Streamlit Chat UI
-module webapp './modules/webapp.bicep' = {
-  name: 'webapp'
+// Container Apps for Streamlit UI and FastAPI
+module containerApps './modules/containerApps.bicep' = {
+  name: 'containerApps'
   params: {
     location: location
     tags: tags
-    webAppName: '${abbrs.compute.webApp}${resourceToken}'
-    appServicePlanName: '${abbrs.compute.appServicePlan}${resourceToken}'
+    containerAppsEnvName: '${abbrs.containers.containerAppsEnvironment}${resourceToken}'
+    containerAppName: '${abbrs.containers.containerApp}${resourceToken}'
+    acrName: '${abbrs.containers.containerRegistry}${resourceToken}'
     azureOpenAIEndpoint: foundry.outputs.openAIEndpoint
     aiServicesName: foundry.outputs.accountName
     chatModel: chatModel
     appInsightsConnectionString: foundry.outputs.appInsightsConnectionString
-    logAnalyticsWorkspaceId: foundry.outputs.logAnalyticsWorkspaceId
+    logAnalyticsCustomerId: foundry.outputs.logAnalyticsCustomerId
+    logAnalyticsSharedKey: foundry.outputs.logAnalyticsSharedKey
   }
 }
 
@@ -84,5 +86,7 @@ output AZURE_APPINSIGHTS_NAME string = foundry.outputs.appInsightsName
 output AZURE_APPINSIGHTS_CONNECTION_STRING string = foundry.outputs.appInsightsConnectionString
 output AZURE_CHAT_MODEL string = chatModel
 output AZURE_EMBEDDING_MODEL string = embeddingModel
-output AZURE_WEB_APP_NAME string = webapp.outputs.webAppName
-output AZURE_WEB_APP_URL string = webapp.outputs.webAppUrl
+output AZURE_CONTAINER_REGISTRY_NAME string = containerApps.outputs.acrName
+output AZURE_CONTAINER_REGISTRY_SERVER string = containerApps.outputs.acrLoginServer
+output AZURE_CONTAINER_APP_NAME string = containerApps.outputs.containerAppName
+output AZURE_CONTAINER_APP_URL string = containerApps.outputs.containerAppUrl

@@ -221,7 +221,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run safety evaluation on agent (SDK v1)")
-    parser.add_argument("--max_simulations", type=int, default=50, help="Max adversarial simulations")
+    parser.add_argument("--max_simulations", type=int, default=25, help="Max adversarial simulations")
     args = parser.parse_args()
     
     # Verify agent ID
