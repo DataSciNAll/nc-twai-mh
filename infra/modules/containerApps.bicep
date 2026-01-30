@@ -19,6 +19,9 @@ param azureOpenAIEndpoint string
 @description('AI Services account name for role assignment')
 param aiServicesName string
 
+@description('Azure AI Search service name for role assignment')
+param searchName string
+
 @description('Chat model deployment name')
 param chatModel string
 
@@ -35,6 +38,11 @@ param logAnalyticsSharedKey string
 // Reference to AI Services for role assignment
 resource aiServices 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
   name: aiServicesName
+}
+
+// Reference to Azure AI Search for role assignment
+resource aiSearch 'Microsoft.Search/searchServices@2024-06-01-preview' existing = {
+  name: searchName
 }
 
 // Azure Container Registry
@@ -162,6 +170,12 @@ resource cognitiveServicesOpenAIUser 'Microsoft.Authorization/roleDefinitions@20
   name: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd' // Cognitive Services OpenAI User
 }
 
+// Role Definition for Search Index Data Reader
+resource searchIndexDataReader 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  name: '1407120a-92aa-4202-b7e9-c0e197c71c8f' // Search Index Data Reader
+}
+
 // Grant Container App managed identity access to Azure OpenAI
 resource containerAppOpenAIAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: aiServices
@@ -169,6 +183,17 @@ resource containerAppOpenAIAccess 'Microsoft.Authorization/roleAssignments@2022-
   properties: {
     principalId: containerApp.identity.principalId
     roleDefinitionId: cognitiveServicesOpenAIUser.id
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant Container App managed identity access to Azure AI Search
+resource containerAppSearchAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: aiSearch
+  name: guid(aiSearch.id, containerApp.id, searchIndexDataReader.id)
+  properties: {
+    principalId: containerApp.identity.principalId
+    roleDefinitionId: searchIndexDataReader.id
     principalType: 'ServicePrincipal'
   }
 }

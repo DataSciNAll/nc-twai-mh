@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY api.py .
+COPY core/ ./core/
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf

@@ -57,11 +57,24 @@ if [ -z "$AZURE_CONTAINER_APP_NAME" ]; then
     exit 1
 fi
 
+if [ -z "$AZURE_OPENAI_ENDPOINT" ]; then
+    echo -e "${RED}Error: AZURE_OPENAI_ENDPOINT not set.${NC}"
+    exit 1
+fi
+
+if [ -z "$AZURE_AI_SEARCH_ENDPOINT" ]; then
+    echo -e "${RED}Error: AZURE_AI_SEARCH_ENDPOINT not set.${NC}"
+    exit 1
+fi
+
 echo ""
 echo -e "${YELLOW}Configuration:${NC}"
 echo "  Resource Group:     $AZURE_RESOURCE_GROUP"
 echo "  Container Registry: $AZURE_CONTAINER_REGISTRY_NAME"
 echo "  Container App:      $AZURE_CONTAINER_APP_NAME"
+echo "  OpenAI Endpoint:    $AZURE_OPENAI_ENDPOINT"
+echo "  Search Endpoint:    $AZURE_AI_SEARCH_ENDPOINT"
+echo "  Chat Model:         ${AZURE_CHAT_MODEL:-gpt-4o-mini}"
 echo ""
 
 ACR_LOGIN_SERVER=$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query loginServer -o tsv)
@@ -78,13 +91,19 @@ az acr build \
     --file Dockerfile \
     .
 
-# Update Container App with new image
+# Update Container App with new image and environment variables
 echo ""
-echo -e "${YELLOW}Updating Container App...${NC}"
+echo -e "${YELLOW}Updating Container App with environment variables...${NC}"
 az containerapp update \
     --name "$AZURE_CONTAINER_APP_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
-    --image "$ACR_LOGIN_SERVER/webapp:latest"
+    --image "$ACR_LOGIN_SERVER/webapp:latest" \
+    --set-env-vars \
+        "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" \
+        "AZURE_AI_SEARCH_ENDPOINT=$AZURE_AI_SEARCH_ENDPOINT" \
+        "AZURE_OPENAI_CHAT_DEPLOYMENT=${AZURE_CHAT_MODEL:-gpt-4o-mini}" \
+        "AZURE_SEARCH_INDEX_NAME=${AZURE_SEARCH_INDEX_NAME:-documents}" \
+        "APPLICATIONINSIGHTS_CONNECTION_STRING=$AZURE_APPINSIGHTS_CONNECTION_STRING"
 
 # Get the app URL
 APP_URL=$(az containerapp show \

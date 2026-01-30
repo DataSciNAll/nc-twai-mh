@@ -1,11 +1,11 @@
 """
-FastAPI REST API for Azure OpenAI Chat
+FastAPI REST API for Azure OpenAI Chat with RAG
 
-Provides REST endpoints for programmatic access to Azure OpenAI chat functionality.
+Provides REST endpoints for programmatic access to Azure OpenAI chat functionality
+with RAG (Retrieval Augmented Generation) support.
 Uses managed identity authentication when deployed to Azure App Service.
 """
 
-import os
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -13,58 +13,48 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from openai import AzureOpenAI
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+# Import shared RAG service
+from core import RAGService, RAGResponse, get_settings
 
 
-# Global client instance
-openai_client: Optional[AzureOpenAI] = None
+# Global RAG service instance
+rag_service: Optional[RAGService] = None
 
 
-def get_openai_client() -> AzureOpenAI:
+def get_rag_service() -> RAGService:
     """
-    Create Azure OpenAI client using managed identity.
+    Get or create RAG service instance.
     """
-    global openai_client
+    global rag_service
     
-    if openai_client is None:
-        endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        if not endpoint:
+    if rag_service is None:
+        settings = get_settings()
+        if not settings.azure_openai_endpoint:
             raise ValueError("AZURE_OPENAI_ENDPOINT environment variable not set")
-        
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
-        
-        openai_client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version="2024-10-21"
-        )
+        rag_service = RAGService(settings)
     
-    return openai_client
+    return rag_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup."""
-    # Initialize OpenAI client on startup
     try:
-        get_openai_client()
-        print("Azure OpenAI client initialized successfully")
+        get_rag_service()
+        print("RAG service initialized successfully")
     except Exception as e:
-        print(f"Warning: Failed to initialize OpenAI client: {e}")
+        print(f"Warning: Failed to initialize RAG service: {e}")
     yield
     # Cleanup on shutdown
-    global openai_client
-    openai_client = None
+    global rag_service
+    rag_service = None
 
 
 # FastAPI app
 app = FastAPI(
-    title="Azure OpenAI Chat API",
-    description="REST API for chat interactions with Azure OpenAI",
+    title="Azure OpenAI Chat API with RAG",
+    description="REST API for RAG-powered chat interactions with Azure OpenAI",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -94,18 +84,27 @@ class ChatRequest(BaseModel):
         description="Previous messages in the conversation for context"
     )
     system_prompt: str = Field(
-        default="You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
-        description="System prompt to guide the assistant's behavior"
+        default="",
+        description="Custom system prompt (leave empty for RAG default)"
     )
     max_tokens: int = Field(default=2048, ge=1, le=4096, description="Maximum tokens in response")
     temperature: float = Field(default=0.7, ge=0, le=2, description="Sampling temperature")
+    use_rag: bool = Field(default=True, description="Whether to use RAG (document retrieval)")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of documents to retrieve for RAG")
 
 
 class ChatResponse(BaseModel):
     """Chat response payload."""
     response: str = Field(..., description="The assistant's response")
     model: str = Field(..., description="Model used for completion")
-    usage: dict = Field(..., description="Token usage statistics")
+    usage: dict = Field(default={}, description="Token usage statistics")
+    sources: list[dict] = Field(default=[], description="Retrieved documents (when using RAG)")
+
+
+class DocumentResponse(BaseModel):
+    """Document search response."""
+    documents: list[dict] = Field(..., description="Retrieved documents")
+    query: str = Field(..., description="The search query")
 
 
 class HealthResponse(BaseModel):
@@ -134,13 +133,12 @@ async def health_check():
     
     Returns the service status and configuration state.
     """
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    model = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4o-mini")
+    settings = get_settings()
     
     return HealthResponse(
         status="healthy",
-        endpoint_configured=bool(endpoint),
-        model=model
+        endpoint_configured=bool(settings.azure_openai_endpoint),
+        model=settings.azure_openai_chat_deployment
     )
 
 
@@ -149,41 +147,64 @@ async def chat(request: ChatRequest):
     """
     Send a message and receive a complete response.
     
-    This endpoint waits for the full response before returning.
-    Use /chat/stream for streaming responses.
+    Uses RAG by default to retrieve relevant documents before generating a response.
+    Set use_rag=false for direct chat without document retrieval.
     """
     try:
-        client = get_openai_client()
-        deployment = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4o-mini")
+        service = get_rag_service()
+        settings = get_settings()
         
-        # Build messages list
-        messages = [{"role": "system", "content": request.system_prompt}]
+        # Convert conversation history to list of dicts
+        history = [{"role": msg.role, "content": msg.content} for msg in request.conversation_history]
         
-        # Add conversation history
-        for msg in request.conversation_history:
-            messages.append({"role": msg.role, "content": msg.content})
-        
-        # Add current user message
-        messages.append({"role": "user", "content": request.message})
-        
-        # Call Azure OpenAI
-        response = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
-            stream=False
-        )
-        
-        return ChatResponse(
-            response=response.choices[0].message.content,
-            model=response.model,
-            usage={
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
-            }
-        )
+        if request.use_rag:
+            # Use RAG flow
+            rag_response = service.chat(
+                query=request.message,
+                conversation_history=history,
+                top_k=request.top_k
+            )
+            
+            # Convert documents to dicts for response
+            sources = [
+                {
+                    "title": doc.title,
+                    "source": doc.source,
+                    "page_number": doc.page_number,
+                    "score": doc.score
+                }
+                for doc in rag_response.documents
+            ]
+            
+            return ChatResponse(
+                response=rag_response.answer,
+                model=settings.azure_openai_chat_deployment,
+                usage={},
+                sources=sources
+            )
+        else:
+            # Direct chat without RAG
+            messages = [{"role": "system", "content": request.system_prompt or "You are a helpful AI assistant."}]
+            messages.extend(history)
+            messages.append({"role": "user", "content": request.message})
+            
+            response = service.generate_response(
+                messages=messages,
+                stream=False,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature
+            )
+            
+            return ChatResponse(
+                response=response.choices[0].message.content,
+                model=response.model,
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                },
+                sources=[]
+            )
         
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -197,34 +218,41 @@ async def chat_stream(request: ChatRequest):
     Send a message and receive a streaming response.
     
     Returns a Server-Sent Events (SSE) stream with response chunks.
+    Uses RAG by default to retrieve relevant documents before generating.
     """
     try:
-        client = get_openai_client()
-        deployment = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4o-mini")
+        service = get_rag_service()
         
-        # Build messages list
-        messages = [{"role": "system", "content": request.system_prompt}]
-        
-        # Add conversation history
-        for msg in request.conversation_history:
-            messages.append({"role": msg.role, "content": msg.content})
-        
-        # Add current user message
-        messages.append({"role": "user", "content": request.message})
+        # Convert conversation history to list of dicts
+        history = [{"role": msg.role, "content": msg.content} for msg in request.conversation_history]
         
         async def generate():
-            response = client.chat.completions.create(
-                model=deployment,
-                messages=messages,
-                max_tokens=request.max_tokens,
-                temperature=request.temperature,
-                stream=True
-            )
-            
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    yield f"data: {content}\n\n"
+            if request.use_rag:
+                # Use RAG streaming
+                for chunk, metadata in service.chat_stream(
+                    query=request.message,
+                    conversation_history=history,
+                    top_k=request.top_k
+                ):
+                    if chunk:
+                        yield f"data: {chunk}\n\n"
+            else:
+                # Direct streaming without RAG
+                messages = [{"role": "system", "content": request.system_prompt or "You are a helpful AI assistant."}]
+                messages.extend(history)
+                messages.append({"role": "user", "content": request.message})
+                
+                response = service.generate_response(
+                    messages=messages,
+                    stream=True,
+                    max_tokens=request.max_tokens,
+                    temperature=request.temperature
+                )
+                
+                for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        yield f"data: {content}\n\n"
             
             yield "data: [DONE]\n\n"
         
@@ -241,6 +269,37 @@ async def chat_stream(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
+
+
+@app.get("/search", response_model=DocumentResponse, tags=["Search"])
+async def search_documents(query: str, top_k: int = 5):
+    """
+    Search for relevant documents without generating a response.
+    
+    Useful for document discovery and testing retrieval.
+    """
+    try:
+        service = get_rag_service()
+        
+        documents = service.get_documents_for_query(query, top_k=top_k)
+        
+        return DocumentResponse(
+            documents=[
+                {
+                    "title": doc.title,
+                    "source": doc.source,
+                    "page_number": doc.page_number,
+                    "content": doc.content[:500] + "..." if len(doc.content) > 500 else doc.content,
+                    "score": doc.score,
+                    "reranker_score": doc.reranker_score
+                }
+                for doc in documents
+            ],
+            query=query
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 if __name__ == "__main__":

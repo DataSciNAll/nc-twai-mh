@@ -61,6 +61,7 @@ module containerApps './modules/containerApps.bicep' = {
     acrName: '${abbrs.containers.containerRegistry}${resourceToken}'
     azureOpenAIEndpoint: foundry.outputs.openAIEndpoint
     aiServicesName: foundry.outputs.accountName
+    searchName: foundry.outputs.searchName
     chatModel: chatModel
     appInsightsConnectionString: foundry.outputs.appInsightsConnectionString
     logAnalyticsCustomerId: foundry.outputs.logAnalyticsCustomerId
