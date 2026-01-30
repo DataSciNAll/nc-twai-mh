@@ -23,6 +23,12 @@ from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizableTextQuery, QueryType
 
 from .config import Settings, get_settings
+from .tracing import (
+    get_tracer, 
+    add_span_attribute, 
+    add_span_event, 
+    record_exception
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,27 +165,43 @@ class RAGService:
         logger.info(f"🔍 RAG STEP 1: Searching for query: '{query}'")
         logger.info(f"   Index: {self.settings.azure_search_index_name}, Top K: {top_k}, Semantic Ranker: {use_semantic_ranker}")
         
-        # Use vectorizable text query - the index has an integrated vectorizer
-        vector_query = VectorizableTextQuery(
-            text=query,
-            k_nearest_neighbors=top_k,
-            fields=self.settings.vector_field_name,
-        )
-        
-        # Build search parameters based on azure-search-openai-demo pattern
-        search_params = {
-            "search_text": query,  # Keyword search
-            "vector_queries": [vector_query],  # Vector search
-            "top": top_k,
-            "select": ["content", "title", "source", "page_number"],
-        }
-        
-        # Add semantic ranking if enabled
-        if use_semantic_ranker:
-            search_params["query_type"] = QueryType.SEMANTIC
-            search_params["semantic_configuration_name"] = self.settings.semantic_configuration_name
+        # Start tracing span for document search
+        tracer = get_tracer()
+        span_context = tracer.start_as_current_span("search_documents") if tracer else None
         
         try:
+            if span_context:
+                span_context.__enter__()
+            
+            # Add search parameters as span attributes
+            add_span_attribute("search.query", query)
+            add_span_attribute("search.top_k", top_k)
+            add_span_attribute("search.use_semantic_ranker", use_semantic_ranker)
+            add_span_attribute("search.index_name", self.settings.azure_search_index_name)
+            add_span_attribute("search.type", "hybrid")
+            
+            # Use vectorizable text query - the index has an integrated vectorizer
+            vector_query = VectorizableTextQuery(
+                text=query,
+                k_nearest_neighbors=top_k,
+                fields=self.settings.vector_field_name,
+            )
+            
+            # Build search parameters based on azure-search-openai-demo pattern
+            search_params = {
+                "search_text": query,  # Keyword search
+                "vector_queries": [vector_query],  # Vector search
+                "top": top_k,
+                "select": ["content", "title", "source", "page_number"],
+            }
+            
+            # Add semantic ranking if enabled
+            if use_semantic_ranker:
+                search_params["query_type"] = QueryType.SEMANTIC
+                search_params["semantic_configuration_name"] = self.settings.semantic_configuration_name
+            
+            add_span_event("search_started", {"index": self.settings.azure_search_index_name})
+            
             results = self.search_client.search(**search_params)
             
             documents = []
@@ -193,6 +215,24 @@ class RAGService:
                     reranker_score=result.get("@search.reranker_score", 0),
                 ))
             
+            # Add result metrics to span
+            add_span_attribute("search.documents_found", len(documents))
+            if documents:
+                add_span_attribute("search.top_score", documents[0].score)
+                sources = [doc.source for doc in documents if doc.source]
+                add_span_attribute("search.sources", ", ".join(sources[:5]))
+                
+                # Add actual document content to trace (truncate if very long)
+                for i, doc in enumerate(documents[:5]):  # Limit to first 5 docs
+                    content_preview = doc.content[:2000] if len(doc.content) > 2000 else doc.content
+                    add_span_attribute(f"search.doc_{i+1}.source", doc.source or "unknown")
+                    add_span_attribute(f"search.doc_{i+1}.title", doc.title or "untitled")
+                    add_span_attribute(f"search.doc_{i+1}.page", doc.page_number)
+                    add_span_attribute(f"search.doc_{i+1}.score", doc.score)
+                    add_span_attribute(f"search.doc_{i+1}.content", content_preview)
+            
+            add_span_event("search_completed", {"documents_found": len(documents)})
+            
             logger.info(f"✅ RAG STEP 1 COMPLETE: Retrieved {len(documents)} documents")
             for i, doc in enumerate(documents):
                 logger.info(f"   [{i+1}] {doc.source} - Score: {doc.score:.4f}")
@@ -201,7 +241,11 @@ class RAGService:
             
         except Exception as e:
             logger.error(f"❌ Search failed: {str(e)}")
+            record_exception(e)
             raise
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
     
     def format_sources_for_prompt(self, documents: list[Document]) -> str:
         """
@@ -217,24 +261,45 @@ class RAGService:
         """
         logger.info(f"📝 RAG STEP 2: Formatting {len(documents)} documents for prompt")
         
-        if not documents:
-            logger.warning("⚠️  No documents to format - sources will be empty")
-            return "No sources available."
+        # Start tracing span for formatting
+        tracer = get_tracer()
+        span_context = tracer.start_as_current_span("format_sources") if tracer else None
         
-        sources = []
-        for doc in documents:
-            # Create source identifier
-            source_name = doc.source or "unknown"
-            if doc.page_number:
-                source_name += f"#page={doc.page_number}"
+        try:
+            if span_context:
+                span_context.__enter__()
             
-            # Format: sourcename: content
-            sources.append(f"{source_name}: {doc.content}")
-        
-        formatted = "\n\n".join(sources)
-        logger.info(f"✅ RAG STEP 2 COMPLETE: Formatted sources ({len(formatted)} chars)")
-        
-        return formatted
+            add_span_attribute("format.document_count", len(documents))
+            
+            if not documents:
+                logger.warning("⚠️  No documents to format - sources will be empty")
+                add_span_attribute("format.result", "no_sources")
+                return "No sources available."
+            
+            sources = []
+            for doc in documents:
+                # Create source identifier
+                source_name = doc.source or "unknown"
+                if doc.page_number:
+                    source_name += f"#page={doc.page_number}"
+                
+                # Format: sourcename: content
+                sources.append(f"{source_name}: {doc.content}")
+            
+            formatted = "\n\n".join(sources)
+            
+            add_span_attribute("format.output_chars", len(formatted))
+            add_span_attribute("format.sources_count", len(sources))
+            # Add the actual formatted context (truncate if very long)
+            context_for_trace = formatted[:8000] if len(formatted) > 8000 else formatted
+            add_span_attribute("format.context_text", context_for_trace)
+            
+            logger.info(f"✅ RAG STEP 2 COMPLETE: Formatted sources ({len(formatted)} chars)")
+            
+            return formatted
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
     
     def format_citations_for_display(self, documents: list[Document]) -> str:
         """
@@ -330,15 +395,66 @@ class RAGService:
         logger.info(f"🤖 RAG STEP 4: Calling OpenAI model: {deployment}")
         logger.info(f"   Message count: {len(messages)}, Stream: {stream}")
         
-        response = self.openai_client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=stream
-        )
+        # Start tracing span for LLM generation
+        tracer = get_tracer()
+        span_context = tracer.start_as_current_span("generate_response") if tracer else None
         
-        return response
+        try:
+            if span_context:
+                span_context.__enter__()
+            
+            # Add generation parameters as span attributes
+            add_span_attribute("gen_ai.system", "azure_openai")
+            add_span_attribute("gen_ai.request.model", deployment)
+            add_span_attribute("gen_ai.request.max_tokens", max_tokens)
+            add_span_attribute("gen_ai.request.temperature", temperature)
+            add_span_attribute("gen_ai.request.streaming", stream)
+            add_span_attribute("gen_ai.request.message_count", len(messages))
+            
+            # Calculate approximate input size
+            input_chars = sum(len(m.get("content", "")) for m in messages)
+            add_span_attribute("gen_ai.request.input_chars", input_chars)
+            
+            # Add actual message content to trace
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                # Truncate very long messages (system prompt can be large)
+                content_preview = content[:10000] if len(content) > 10000 else content
+                add_span_attribute(f"gen_ai.request.message_{i}.role", role)
+                add_span_attribute(f"gen_ai.request.message_{i}.content", content_preview)
+            
+            add_span_event("llm_call_started", {"model": deployment, "stream": stream})
+            
+            response = self.openai_client.chat.completions.create(
+                model=deployment,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=stream
+            )
+            
+            if not stream and hasattr(response, 'usage'):
+                add_span_attribute("gen_ai.response.prompt_tokens", response.usage.prompt_tokens)
+                add_span_attribute("gen_ai.response.completion_tokens", response.usage.completion_tokens)
+                add_span_attribute("gen_ai.response.total_tokens", response.usage.total_tokens)
+            
+            # Add actual response content for non-streaming
+            if not stream and response.choices:
+                response_content = response.choices[0].message.content or ""
+                add_span_attribute("gen_ai.response.content", response_content)
+                add_span_attribute("gen_ai.response.finish_reason", response.choices[0].finish_reason)
+            
+            add_span_event("llm_call_completed")
+            
+            return response
+            
+        except Exception as e:
+            record_exception(e)
+            raise
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
     
     def chat(
         self,
@@ -365,26 +481,73 @@ class RAGService:
         logger.info(f"📨 NEW USER QUERY: {query}")
         logger.info("=" * 50)
         
-        # Step 1: Retrieve documents
-        documents = self.search_documents(query, top_k, use_semantic_ranker)
+        # Start parent tracing span for the entire RAG workflow
+        tracer = get_tracer()
+        span_context = tracer.start_as_current_span("rag_chat_workflow") if tracer else None
         
-        # Step 2: Format sources
-        sources_text = self.format_sources_for_prompt(documents)
-        
-        # Step 3: Build messages
-        system_prompt = RAG_SYSTEM_PROMPT.format(sources=sources_text)
-        messages = self.build_messages(query, sources_text, conversation_history)
-        
-        # Step 4: Generate response
-        response = self.generate_response(messages, stream=False)
-        answer = response.choices[0].message.content
-        
-        return RAGResponse(
-            answer=answer,
-            documents=documents,
-            sources_text=sources_text,
-            system_prompt=system_prompt
-        )
+        try:
+            if span_context:
+                span_context.__enter__()
+            
+            # Add workflow attributes
+            add_span_attribute("rag.query", query)
+            add_span_attribute("rag.workflow_type", "complete")
+            add_span_attribute("rag.streaming", False)
+            add_span_attribute("rag.conversation_turns", len(conversation_history) if conversation_history else 0)
+            
+            add_span_event("rag_workflow_started", {"query_length": len(query)})
+            
+            # Step 1: Retrieve documents
+            add_span_event("step_1_search_started")
+            documents = self.search_documents(query, top_k, use_semantic_ranker)
+            add_span_event("step_1_search_completed", {"documents_found": len(documents)})
+            
+            # Step 2: Format sources
+            add_span_event("step_2_format_started")
+            sources_text = self.format_sources_for_prompt(documents)
+            add_span_event("step_2_format_completed", {"sources_length": len(sources_text)})
+            
+            # Step 3: Build messages
+            add_span_event("step_3_build_messages_started")
+            system_prompt = RAG_SYSTEM_PROMPT.format(sources=sources_text)
+            messages = self.build_messages(query, sources_text, conversation_history)
+            add_span_event("step_3_build_messages_completed", {"message_count": len(messages)})
+            
+            # Step 4: Generate response
+            add_span_event("step_4_generate_started")
+            response = self.generate_response(messages, stream=False)
+            answer = response.choices[0].message.content
+            add_span_event("step_4_generate_completed", {"answer_length": len(answer)})
+            
+            # Add final workflow metrics
+            add_span_attribute("rag.documents_retrieved", len(documents))
+            add_span_attribute("rag.answer_length", len(answer))
+            add_span_attribute("rag.status", "success")
+            
+            # Add actual input and output text to workflow span
+            add_span_attribute("rag.input.user_query", query)
+            add_span_attribute("rag.input.context", sources_text[:8000] if len(sources_text) > 8000 else sources_text)
+            add_span_attribute("rag.output.answer", answer)
+            
+            if hasattr(response, 'usage'):
+                add_span_attribute("rag.total_tokens", response.usage.total_tokens)
+            
+            add_span_event("rag_workflow_completed")
+            
+            return RAGResponse(
+                answer=answer,
+                documents=documents,
+                sources_text=sources_text,
+                system_prompt=system_prompt
+            )
+            
+        except Exception as e:
+            add_span_attribute("rag.status", "error")
+            record_exception(e)
+            raise
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
     
     def chat_stream(
         self,
@@ -413,34 +576,85 @@ class RAGService:
         logger.info(f"📨 NEW USER QUERY (streaming): {query}")
         logger.info("=" * 50)
         
-        # Step 1: Retrieve documents
-        documents = self.search_documents(query, top_k, use_semantic_ranker)
+        # Start parent tracing span for the streaming RAG workflow
+        tracer = get_tracer()
+        span_context = tracer.start_as_current_span("rag_chat_stream_workflow") if tracer else None
         
-        # Step 2: Format sources
-        sources_text = self.format_sources_for_prompt(documents)
-        
-        # Step 3: Build messages
-        system_prompt = RAG_SYSTEM_PROMPT.format(sources=sources_text)
-        messages = self.build_messages(query, sources_text, conversation_history)
-        
-        # Step 4: Stream response
-        response = self.generate_response(messages, stream=True)
-        
-        full_answer = ""
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_answer += content
-                yield content, None
-        
-        # Final yield with complete metadata
-        final_response = RAGResponse(
-            answer=full_answer,
-            documents=documents,
-            sources_text=sources_text,
-            system_prompt=system_prompt
-        )
-        yield "", final_response
+        try:
+            if span_context:
+                span_context.__enter__()
+            
+            # Add workflow attributes
+            add_span_attribute("rag.query", query)
+            add_span_attribute("rag.workflow_type", "streaming")
+            add_span_attribute("rag.streaming", True)
+            add_span_attribute("rag.conversation_turns", len(conversation_history) if conversation_history else 0)
+            
+            add_span_event("rag_stream_workflow_started", {"query_length": len(query)})
+            
+            # Step 1: Retrieve documents
+            add_span_event("step_1_search_started")
+            documents = self.search_documents(query, top_k, use_semantic_ranker)
+            add_span_event("step_1_search_completed", {"documents_found": len(documents)})
+            
+            # Step 2: Format sources
+            add_span_event("step_2_format_started")
+            sources_text = self.format_sources_for_prompt(documents)
+            add_span_event("step_2_format_completed", {"sources_length": len(sources_text)})
+            
+            # Step 3: Build messages
+            add_span_event("step_3_build_messages_started")
+            system_prompt = RAG_SYSTEM_PROMPT.format(sources=sources_text)
+            messages = self.build_messages(query, sources_text, conversation_history)
+            add_span_event("step_3_build_messages_completed", {"message_count": len(messages)})
+            
+            # Step 4: Stream response
+            add_span_event("step_4_stream_started")
+            response = self.generate_response(messages, stream=True)
+            
+            full_answer = ""
+            chunk_count = 0
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_answer += content
+                    chunk_count += 1
+                    yield content, None
+            
+            add_span_event("step_4_stream_completed", {
+                "answer_length": len(full_answer),
+                "chunk_count": chunk_count
+            })
+            
+            # Add final workflow metrics
+            add_span_attribute("rag.documents_retrieved", len(documents))
+            add_span_attribute("rag.answer_length", len(full_answer))
+            add_span_attribute("rag.stream_chunk_count", chunk_count)
+            add_span_attribute("rag.status", "success")
+            
+            # Add actual input and output text to workflow span
+            add_span_attribute("rag.input.user_query", query)
+            add_span_attribute("rag.input.context", sources_text[:8000] if len(sources_text) > 8000 else sources_text)
+            add_span_attribute("rag.output.answer", full_answer)
+            
+            add_span_event("rag_stream_workflow_completed")
+            
+            # Final yield with complete metadata
+            final_response = RAGResponse(
+                answer=full_answer,
+                documents=documents,
+                sources_text=sources_text,
+                system_prompt=system_prompt
+            )
+            yield "", final_response
+            
+        except Exception as e:
+            add_span_attribute("rag.status", "error")
+            record_exception(e)
+            raise
+        finally:
+            if span_context:
+                span_context.__exit__(None, None, None)
     
     def get_documents_for_query(
         self,

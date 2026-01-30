@@ -67,6 +67,10 @@ if [ -z "$AZURE_AI_SEARCH_ENDPOINT" ]; then
     exit 1
 fi
 
+if [ -z "$AZURE_APPINSIGHTS_CONNECTION_STRING" ]; then
+    echo -e "${YELLOW}Warning: AZURE_APPINSIGHTS_CONNECTION_STRING not set. Tracing will be disabled.${NC}"
+fi
+
 echo ""
 echo -e "${YELLOW}Configuration:${NC}"
 echo "  Resource Group:     $AZURE_RESOURCE_GROUP"
@@ -75,6 +79,7 @@ echo "  Container App:      $AZURE_CONTAINER_APP_NAME"
 echo "  OpenAI Endpoint:    $AZURE_OPENAI_ENDPOINT"
 echo "  Search Endpoint:    $AZURE_AI_SEARCH_ENDPOINT"
 echo "  Chat Model:         ${AZURE_CHAT_MODEL:-gpt-4o-mini}"
+echo "  App Insights:       ${AZURE_APPINSIGHTS_CONNECTION_STRING:-(not configured)}"
 echo ""
 
 ACR_LOGIN_SERVER=$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query loginServer -o tsv)

@@ -14,8 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-# Import shared RAG service
+# Import shared RAG service and tracing
 from core import RAGService, RAGResponse, get_settings
+from core.tracing import setup_tracing, add_span_attribute, add_span_event
 
 
 # Global RAG service instance
@@ -40,6 +41,17 @@ def get_rag_service() -> RAGService:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup."""
+    # Initialize tracing first
+    settings = get_settings()
+    tracing_enabled = setup_tracing(
+        service_name="rag-api",
+        connection_string=settings.applicationinsights_connection_string
+    )
+    if tracing_enabled:
+        print("✅ Tracing initialized - sending telemetry to Azure Application Insights")
+    else:
+        print("⚠️ Tracing not enabled - set APPLICATIONINSIGHTS_CONNECTION_STRING to enable")
+    
     try:
         get_rag_service()
         print("RAG service initialized successfully")

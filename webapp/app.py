@@ -17,12 +17,24 @@ Designed to run on Azure App Service with system-assigned managed identity.
 import logging
 import streamlit as st
 
-# Import shared RAG service
+# Import shared RAG service and tracing
 from core import RAGService, get_settings
+from core.tracing import setup_tracing
 
 # Configure logging for debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Initialize tracing on module load
+settings = get_settings()
+tracing_enabled = setup_tracing(
+    service_name="rag-webapp",
+    connection_string=settings.applicationinsights_connection_string
+)
+if tracing_enabled:
+    logger.info("✅ Tracing initialized - sending telemetry to Azure Application Insights")
+else:
+    logger.warning("⚠️ Tracing not enabled - set APPLICATIONINSIGHTS_CONNECTION_STRING to enable")
 
 # Page configuration
 st.set_page_config(
