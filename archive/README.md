@@ -186,7 +186,7 @@ az webapp log tail --resource-group <rg-name> --name <webapp-name>
 ## File Structure
 
 ```
-webapp/
+app/
 ├── app.py              # Streamlit web UI application
 ├── api.py              # FastAPI REST API
 ├── requirements.txt    # Python dependencies

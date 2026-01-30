@@ -13,7 +13,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-WEBAPP_DIR="$ROOT_DIR/webapp"
+WEBAPP_DIR="$ROOT_DIR/app"
 
 # Load environment variables from azd
 AZURE_DIR="$ROOT_DIR/.azure"

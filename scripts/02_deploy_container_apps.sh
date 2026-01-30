@@ -15,7 +15,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-WEBAPP_DIR="$ROOT_DIR/webapp"
+WEBAPP_DIR="$ROOT_DIR/app"
 
 # Colors for output
 RED='\033[0;31m'
@@ -84,7 +84,7 @@ echo ""
 
 ACR_LOGIN_SERVER=$(az acr show --name "$AZURE_CONTAINER_REGISTRY_NAME" --query loginServer -o tsv)
 
-# Navigate to webapp directory
+# Navigate to app directory
 cd "$WEBAPP_DIR"
 
 # Build image using ACR Build Tasks (no local Docker required)
@@ -92,7 +92,7 @@ echo ""
 echo -e "${YELLOW}Building combined Streamlit + FastAPI image in Azure...${NC}"
 az acr build \
     --registry "$AZURE_CONTAINER_REGISTRY_NAME" \
-    --image webapp:latest \
+    --image app:latest \
     --file Dockerfile \
     .
 
@@ -102,7 +102,7 @@ echo -e "${YELLOW}Updating Container App with environment variables...${NC}"
 az containerapp update \
     --name "$AZURE_CONTAINER_APP_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
-    --image "$ACR_LOGIN_SERVER/webapp:latest" \
+    --image "$ACR_LOGIN_SERVER/app:latest" \
     --set-env-vars \
         "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" \
         "AZURE_AI_SEARCH_ENDPOINT=$AZURE_AI_SEARCH_ENDPOINT" \

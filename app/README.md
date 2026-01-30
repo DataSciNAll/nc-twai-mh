@@ -189,7 +189,7 @@ az containerapp logs show \
 ## File Structure
 
 ```
-webapp/
+app/
 ├── app.py              # Streamlit web UI application
 ├── api.py              # FastAPI REST API
 ├── Dockerfile          # Container image definition
