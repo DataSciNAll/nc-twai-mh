@@ -73,7 +73,7 @@ def get_search_clients():
 
 def create_index(index_client: SearchIndexClient):
     """Create or update the search index with integrated vectorizer."""
-    embedding_model = os.environ.get("AZURE_EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_model = os.environ.get("AZURE_EMBEDDING_MODEL", "text-embedding-3-large")
     ai_endpoint = os.environ.get("AZURE_AI_ENDPOINT")
     
     fields = [
@@ -87,7 +87,7 @@ def create_index(index_client: SearchIndexClient):
             name="embedding",
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
             searchable=True,
-            vector_search_dimensions=1536,
+            vector_search_dimensions=3072,  # text-embedding-3-large uses 3072 dimensions
             vector_search_profile_name="default-profile"
         ),
     ]
@@ -219,7 +219,7 @@ def chunk_text_by_sentences(text: str, max_size: int = CHUNK_SIZE, overlap: int 
 
 def get_embedding(client: AzureOpenAI, text: str) -> list[float]:
     """Generate embedding for text using OpenAI client."""
-    model = os.environ.get("AZURE_EMBEDDING_MODEL", "text-embedding-3-small")
+    model = os.environ.get("AZURE_EMBEDDING_MODEL", "text-embedding-3-large")
     response = client.embeddings.create(input=[text], model=model)
     return response.data[0].embedding
 

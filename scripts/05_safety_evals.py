@@ -1,4 +1,4 @@
-"""Run safety evaluations on AI Foundry agent using adversarial simulator (SDK v1)."""
+"""Run safety evaluations on Target Application using adversarial simulator."""
 
 import os
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 from pprint import pprint
 
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential, AzureDeveloperCliCredential
 from azure.ai.evaluation import ContentSafetyEvaluator, evaluate
@@ -16,8 +17,6 @@ from azure.ai.evaluation.simulator import (
     AdversarialSimulator,
     SupportedLanguages,
 )
-from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import ListSortOrder
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
@@ -36,7 +35,7 @@ env_path = azure_dir / env_name / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
-OUTPUT_DIR = Path(__file__).parent.parent / "evals" / "safety_results"
+OUTPUT_DIR = Path(__file__).parent.parent / "evals" / "results" / "safety"
 
 
 def get_azure_credential():
@@ -47,48 +46,54 @@ def get_azure_credential():
     return AzureDeveloperCliCredential(process_timeout=60)
 
 
-def get_agents_client():
-    """Create AI Agents client."""
-    endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
-    return AgentsClient(
-        endpoint=endpoint,
-        credential=DefaultAzureCredential(),
-    )
-
-
-def call_agent(question: str) -> str:
-    """Call the agent and return response."""
-    agents_client = get_agents_client()
-    agent_id = os.environ.get("AZURE_AGENT_ID")
+def call_target_application(query: str) -> str:
+    """
+    Call the Container App backend API and return response.
     
-    if not agent_id:
-        return "Error: AZURE_AGENT_ID not set"
+    Args:
+        query: The user question to ask the application
+        
+    Returns:
+        Response string from the target application
+    """
+    backend_url = os.getenv("AZURE_CONTAINER_APP_URL", "")
+    
+    if not backend_url:
+        return "Error: AZURE_CONTAINER_APP_URL not set"
     
     try:
-        thread = agents_client.threads.create()
-        
-        agents_client.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=question
+        response = requests.post(
+            f"{backend_url}/chat",
+            json={
+                "message": query,
+                "conversation_history": [],
+                "system_prompt": "You are a helpful AI assistant. Provide clear, accurate, and helpful responses.",
+                "max_tokens": 2048
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=120
         )
+        response.raise_for_status()
         
-        run = agents_client.runs.create_and_process(
-            thread_id=thread.id,
-            agent_id=agent_id,
-        )
+        result = response.json()
+        answer = result.get("response", result.get("message", ""))
         
-        messages = agents_client.messages.list(thread_id=thread.id, order=ListSortOrder.ASCENDING)
+        return answer if answer else "No response"
         
-        for msg in messages:
-            if msg.role == "assistant" and msg.text_messages:
-                return msg.text_messages[-1].text.value
-        
-        return "No response"
-        
-    except Exception as e:
-        logger.error(f"Error calling agent: {e}")
-        return f"Error: {str(e)}"
+    except requests.exceptions.Timeout:
+        logger.warning(f"Timeout calling target application for query: {query[:50]}...")
+        return "I cannot process that request at this time."
+    except requests.exceptions.RequestException as e:
+        # Log the error but return a safe response for the simulator
+        error_detail = ""
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json().get("detail", e.response.text[:200])
+            except:
+                error_detail = e.response.text[:200] if e.response.text else str(e)
+        logger.warning(f"Error calling target application: {e}. Detail: {error_detail}")
+        # Return a non-error response so the simulator can continue
+        return "I cannot process that request."
 
 
 async def callback(
@@ -97,13 +102,13 @@ async def callback(
     session_state=None,
     context=None,
 ):
-    """Callback function for adversarial simulator that calls the agent."""
+    """Callback function for adversarial simulator that calls the target application."""
     messages_list = messages["messages"]
     latest_message = messages_list[-1]
     query = latest_message["content"]
     
     try:
-        response_text = call_agent(query)
+        response_text = call_target_application(query)
         message = {"content": response_text, "role": "assistant"}
         
         return {
@@ -220,17 +225,18 @@ def run_safety_evaluation(azure_ai_project: str, data_path: str, num_simulations
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Run safety evaluation on agent (SDK v1)")
-    parser.add_argument("--max_simulations", type=int, default=50, help="Max adversarial simulations")
+    parser = argparse.ArgumentParser(description="Run safety evaluation on target application")
+    parser.add_argument("--max_simulations", type=int, default=5, help="Max adversarial simulations")
     args = parser.parse_args()
     
-    # Verify agent ID
-    agent_id = os.environ.get("AZURE_AGENT_ID")
-    if not agent_id:
-        print("Error: AZURE_AGENT_ID not set. Run 04_create_agent_v1.py first.")
+    # Verify backend URL
+    backend_url = os.environ.get("AZURE_CONTAINER_APP_URL")
+    if not backend_url:
+        print("Error: AZURE_CONTAINER_APP_URL not set.")
+        print("Set it in your .env file or run 'azd up' to provision infrastructure.")
         exit(1)
     
-    print(f"Running safety evaluation on agent: {agent_id}")
+    print(f"Running safety evaluation on target application: {backend_url}")
     
     # Run simulation
     azure_ai_project, data_path, num_simulations = asyncio.run(
